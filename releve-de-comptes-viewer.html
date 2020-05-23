@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Les sous</title>
+    <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/bulma@0.8.2/css/bulma.min.css">
+    <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/chart.js@2.9.3/dist/Chart.min.css">
+    <script defer src="https://use.fontawesome.com/releases/v5.3.1/js/all.js"></script>
+  </head>
+  <body>
+  <section class="section">
+    <div class="container">
+      <h1 class="title">
+        Evolution du budget
+      </h1>
+      <p class="subtitle">
+        Visualiseur des revenus, des dépenses et du solde
+      </p>
+      <div class="file">
+        <label class="file-label">
+          <input id="csvFileInput" class="file-input" type="file" name="file">
+          <span class="file-cta">
+            <span class="file-icon">
+              <i class="fas fa-upload"></i>
+            </span>
+            <span class="file-label">
+              Choose a file…
+            </span>
+          </span>
+        </label>
+      </div>
+      <canvas id="chart" width="400" height="200"></canvas>
+    </div>
+  </section>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@2.9.3/dist/Chart.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.26.0/moment.min.js"></script>
+  <script>
+  window.addEventListener("DOMContentLoaded", (event) => {
+      processFileInput(document.getElementById('csvFileInput'));
+  });
+  const FORMAT_DATE = "DD/MM/YYYY";
+  const selectedFile = document.getElementById('csvFileInput').files[0];
+  const fileInput = document.getElementById('csvFileInput');
+  fileInput.addEventListener("change", handleFileInput, false);
+  function handleFileInput(event) {
+    processFileInput(event.target)
+  }
+
+  function processFileInput(csvFileInput) {
+    const fileList = csvFileInput.files; /* now you can work with the file list */
+    if (fileList.length != 1)
+      return
+    readFile(fileList[0]);
+  }
+
+
+  function convertCsvDataToObject(input, separator = ';') {
+    /** Convert a csv text input from the bank to a json object
+    param input: string containing the csv data from the bank */
+    let output = []
+    let lines = input.split('\n')
+    lines.forEach((line, index) => {
+      attributes = line.split(separator);
+      if (index === 0 || attributes.length !== 5) // filter noise
+        return
+      attributes[4] = attributes[4].slice(0, -2); // Remove /r
+      output.push({
+        "date": attributes[0], // Date
+        "value_date": attributes[1], // Date de valeur
+        "amount": parseFloat(attributes[2]), // Montant
+        "label": attributes[3], // Libellé
+        "balance": parseFloat(attributes[4]), // Solde
+      });
+    });
+    return output;
+  }
+
+  function readFile(file) {
+    const reader = new FileReader();
+    reader.addEventListener('load', (event) => {
+      const result = event.target.result;
+      if (result) {
+        let output = convertCsvDataToObject(result);
+        updateChart(output);
+      }
+    });
+
+    reader.addEventListener('progress', (event) => {
+      if (event.loaded && event.total) {
+        const percent = (event.loaded / event.total) * 100;
+        console.log(`Reader progress: ${Math.round(percent)}`);
+      }
+    });
+    reader.readAsText(file);
+  }
+
+  function updateChart(data) {
+    /** Convert a csv text input from the bank to a json object
+    param input: js containing spend data */
+    let nLines = data.length;
+    let startDate = moment(data[0].value_date, FORMAT_DATE);
+    let endDate = moment(data[nLines - 1].value_date, FORMAT_DATE);
+    let startMonth = startDate.clone().startOf('month');
+    let endMonth = endDate.clone().endOf('month');
+
+    // Example of what we get at this time:
+    // startDate=12/05/2020, endDate=26/08/2020
+    // startMonth=01/05/2020, endMonth=31/08/2020
+
+    const monthlyBudget = false; // true = full months , false = start and end date
+
+    if (!monthlyBudget) {
+      startMonth = startDate;
+      endMonth = endDate;
+    }
+
+    let iterDay = startMonth.clone();
+    let range = [];
+    let expenses = [];
+    let revenues = [];
+    let balances = [];
+    let currentBalance = 0;
+
+    while (iterDay.isBefore(endMonth)) {
+      let dateString = iterDay.format(FORMAT_DATE);
+      range.push(dateString);
+      let dayExpenses = data.filter(line =>
+        line.value_date == dateString && line.amount <= 0);
+      let dayRevenues = data.filter(line =>
+        line.value_date == dateString && line.amount > 0);
+      let dayBalance = data.filter(line =>
+        line.value_date == dateString);
+      if (dayBalance.length > 0) {
+        currentBalance = dayBalance[dayBalance.length - 1].balance // We keep the last balance
+      }
+      if (iterDay.isAfter(endDate)) {
+        currentBalance = 0; // Stop counting balance
+      }
+      let totalDayExpenses = dayExpenses.reduce((accumulator, currentItem) => accumulator + currentItem.amount, 0)
+      let totalDayRevenues = dayRevenues.reduce((accumulator, currentItem) => accumulator + currentItem.amount, 0)
+      expenses.push(totalDayExpenses)
+      revenues.push(totalDayRevenues)
+      balances.push(currentBalance)
+      iterDay.add(1, 'days');
+    }
+
+    chart.data.labels = range;
+    chart.data.datasets[0].data = expenses;
+    chart.data.datasets[1].data = revenues;
+    chart.data.datasets[2].data = balances;
+    chart.update()
+  }
+  // Disable automatic style injection
+  // cf https://www.chartjs.org/docs/latest/getting-started/integration.html#content-security-policy
+  Chart.platform.disableCSSInjection = true;
+
+  var chartCtx = document.getElementById('chart');
+  var chart = new Chart(chartCtx, {
+    type: 'bar',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Expenses',
+        data: [],
+        backgroundColor:
+          'rgba(255, 99, 132, 0.2)',
+        borderColor:
+          'rgba(255, 99, 132, 1)',
+        borderWidth: 1
+      }, {
+        label: 'Revenues',
+        data: [],
+        backgroundColor:
+          'rgba(75, 192, 192, 0.2)',
+        borderColor:
+          'rgba(75, 192, 192, 1)',
+        borderWidth: 1
+      }, {
+        label: 'Balance',
+        type: 'line',
+        data: [],
+        backgroundColor:
+          'rgba(255, 206, 86, 0.2)',
+        borderColor:
+          'rgba(255, 206, 86, 1)',
+        borderWidth: 1
+      }]
+    },
+    options: {
+      scales: {
+        xAxes: [{
+          stacked: true
+        }],
+        yAxes: [{
+          stacked:true,
+          ticks: {
+            beginAtZero: true
+          }
+        }],
+      }
+    }
+  });
+  </script>
+  </body>
+</html>
